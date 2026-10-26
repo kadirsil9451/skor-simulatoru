@@ -21,7 +21,9 @@ Uygulama maç ve puan durumu verilerini **football-data.org** ücretsiz servisin
 1. https://www.football-data.org/client/register adresinden kayıt ol; anahtar e-postana gelir.
 2. Uygulamada **Ayarlar** sekmesine anahtarı yapıştır → **Kaydet ve maçları getir**.
 
-Ücretsiz paket: Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira Liga, Championship, Şampiyonlar Ligi, Brezilya Serie A. Dakikada 10 istek sınırı vardır; uygulama verileri önbelleğe alır ve sınıra takılırsa kendisi bekler. **Süper Lig ücretsiz pakette yok.**
+Ücretsiz paket: Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira Liga, Championship, Şampiyonlar Ligi, Brezilya Serie A. Dakikada 10 istek sınırı vardır; uygulama verileri önbelleğe alır ve sınıra takılırsa kendisi bekler.
+
+**Süper Lig** anahtar gerektirmez; veriler TheSportsDB'nin ücretsiz servisinden gelir. Bu servis tam puan durumu vermediği için uygulama puan durumunu haftalık sonuçlardan kendisi hesaplar. İlk açılışta haftalar tek tek indirildiği için yükleme 30–60 saniye sürebilir; bitmiş haftalar telefonda saklanır, sonraki açılışlar hızlıdır. Süper Lig'de her maçın tahmini yalnızca o maçtan önce oynanmış maçlarla yapılır, bu yüzden geçmiş günlerdeki isabet oranı gerçekçidir.
 
 ## Kullanım
 

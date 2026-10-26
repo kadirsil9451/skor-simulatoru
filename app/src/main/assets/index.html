@@ -198,22 +198,23 @@ a{color:var(--turf)}
 "use strict";
 /* ================= ayarlar & depolama ================= */
 const API="https://api.football-data.org/v4";
-const COMPS={PL:"Premier League",PD:"La Liga",SA:"Serie A",BL1:"Bundesliga",FL1:"Ligue 1",DED:"Eredivisie",PPL:"Primeira Liga",ELC:"Championship",CL:"Şampiyonlar Ligi",BSA:"Brezilya Serie A"};
+const COMPS={TSL:"Süper Lig",PL:"Premier League",PD:"La Liga",SA:"Serie A",BL1:"Bundesliga",FL1:"Ligue 1",DED:"Eredivisie",PPL:"Primeira Liga",ELC:"Championship",CL:"Şampiyonlar Ligi",BSA:"Brezilya Serie A"};
 const store={
   get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 };
 let apiKey=store.get("apiKey","");
-let enabled=new Set(store.get("comps",["PL","PD","SA","BL1","FL1"]));
+let enabled=new Set(store.get("comps",["TSL","PL","PD","SA","BL1","FL1"]));
+if(!store.get("tslAdded",false)){enabled.add("TSL");store.set("tslAdded",true);store.set("comps",[...enabled])}
 let day=new Date(); day.setHours(12,0,0,0);
 let matches=[]; let selected=new Set(); let seed=2026; let lastResults=null;
 
 /* ================= HTTP (Android köprüsü ya da fetch) ================= */
 const pending={}; let reqId=0;
 window.__native=(id,code,body,reset)=>{const p=pending[id];if(!p)return;delete pending[id];p({code,body,reset:+reset||0})};
-function rawGet(url){
-  if(window.Android&&Android.get){return new Promise(res=>{const id="r"+(++reqId);pending[id]=res;Android.get(id,url,apiKey)})}
-  return fetch(url,{headers:{"X-Auth-Token":apiKey}}).then(async r=>({code:r.status,body:await r.text(),reset:+(r.headers.get("X-RequestCounter-Reset")||0)})).catch(e=>({code:0,body:String(e),reset:0}));
+function rawGet(url,token=apiKey){
+  if(window.Android&&Android.get){return new Promise(res=>{const id="r"+(++reqId);pending[id]=res;Android.get(id,url,token)})}
+  return fetch(url,token?{headers:{"X-Auth-Token":token}}:{}).then(async r=>({code:r.status,body:await r.text(),reset:+(r.headers.get("X-RequestCounter-Reset")||0)})).catch(e=>({code:0,body:String(e),reset:0}));
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function api(path,onWait){
@@ -235,22 +236,127 @@ const fmtTime=iso=>new Date(iso).toLocaleTimeString("tr-TR",{hour:"2-digit",minu
 
 /* ================= veri yükleme ================= */
 const $=s=>document.querySelector(s);
+let listNotes=[];
+let loadToken=0;
 async function loadMatches(){
   $("#dateLbl").textContent=fmtDay(day);
   const box=$("#v-matches");
-  if(!apiKey){box.innerHTML=`<div class="panel msg"><b>Başlamak için API anahtarı gerekli.</b><br>Ayarlar sekmesinden ücretsiz football-data.org anahtarını gir; günün maçları ve puan durumları otomatik gelir.</div>`;showTab("set");return}
-  const key="m:"+ymd(day);
-  const cached=store.get(key,null);
-  if(cached&&Date.now()-cached.at<10*60*1000){matches=cached.data;renderList();return}
-  box.innerHTML=`<div class="panel msg"><span class="spin"></span>Maçlar yükleniyor…</div>`;
-  try{
-    const d=ymd(day);const nx=new Date(day);nx.setDate(nx.getDate()+1);
-    // API tarihleri UTC; yerel gün için ertesi günü de çekip yerel tarihe göre süzüyoruz
-    const j=await api(`/matches?dateFrom=${d}&dateTo=${ymd(nx)}`);
-    matches=(j.matches||[]).filter(m=>ymd(new Date(m.utcDate))===d);
-    store.set(key,{at:Date.now(),data:matches});
-    renderList();
-  }catch(e){box.innerHTML=`<div class="panel msg err">${e.message}</div>`}
+  const my=++loadToken;
+  const wantTSL=enabled.has("TSL");
+  const wantFD=[...enabled].some(c=>c!=="TSL");
+  listNotes=[];
+  if(!apiKey&&!wantTSL){box.innerHTML=`<div class="panel msg"><b>Başlamak için API anahtarı gerekli.</b><br>Ayarlar sekmesinden ücretsiz football-data.org anahtarını gir; günün maçları ve puan durumları otomatik gelir. Süper Lig için anahtar gerekmez: Ayarlar'dan Süper Lig'i açman yeterli.</div>`;showTab("set");return}
+  const prog=t=>{if(my===loadToken)box.innerHTML=`<div class="panel msg"><span class="spin"></span>${t}</div>`};
+  prog("Maçlar yükleniyor…");
+  const d=ymd(day);let fd=[],tsl=[];
+  if(wantFD&&apiKey){
+    const key="m:"+d;const cached=store.get(key,null);
+    if(cached&&Date.now()-cached.at<10*60*1000)fd=cached.data;
+    else try{
+      const nx=new Date(day);nx.setDate(nx.getDate()+1);
+      // API tarihleri UTC; yerel gün için ertesi günü de çekip yerel tarihe göre süzüyoruz
+      const j=await api(`/matches?dateFrom=${d}&dateTo=${ymd(nx)}`);
+      fd=(j.matches||[]).filter(m=>ymd(new Date(m.utcDate))===d);
+      store.set(key,{at:Date.now(),data:fd});
+    }catch(e){listNotes.push(e.message)}
+  }else if(wantFD&&!apiKey){listNotes.push("Diğer ligler için Ayarlar'dan football-data.org anahtarını gir.")}
+  if(wantTSL){try{tsl=await tslDay(day,prog)}catch(e){listNotes.push("Süper Lig: "+e.message)}}
+  if(my!==loadToken)return;
+  matches=tsl.concat(fd);
+  renderList();
+}
+
+/* ================= Süper Lig (TheSportsDB, anahtarsız) ================= */
+const TSDB="https://www.thesportsdb.com/api/v1/json/123/",TSL_ID=4339,TSL_ROUNDS=34;
+let tsdbLast=0;
+async function tsdb(path,prog){
+  for(let a=0;a<4;a++){
+    const w=tsdbLast+2500-Date.now();if(w>0)await sleep(w);
+    tsdbLast=Date.now();
+    const r=await rawGet(TSDB+path,"");
+    if(r.code===200){try{return JSON.parse(r.body)}catch(e){throw new Error("Veri okunamadı.")}}
+    if(r.code===429){prog&&prog("Süper Lig sunucusu yoğun, 40 sn bekleniyor…");await sleep(40000);continue}
+    if(r.code===0)throw new Error("İnternet bağlantısı yok ya da sunucuya ulaşılamadı.");
+    throw new Error("Sunucu hatası ("+r.code+").");
+  }
+  throw new Error("Sunucu şu an yanıt vermiyor, biraz sonra tekrar dene.");
+}
+const seasonOf=d=>d.getMonth()>=6?`${d.getFullYear()}-${d.getFullYear()+1}`:`${d.getFullYear()-1}-${d.getFullYear()}`;
+function tslStatus(e,utc){
+  const s=(e.strStatus||"").toUpperCase();
+  const hasScore=e.intHomeScore!=null&&e.intHomeScore!==""&&e.intAwayScore!=null&&e.intAwayScore!=="";
+  if(["FT","AET","PEN","MATCH FINISHED"].includes(s))return"FINISHED";
+  if(["PST","CANC","ABD","POSTPONED","CANCELLED"].includes(s)||e.strPostponed==="yes")return"POSTPONED";
+  if(["1H","2H","HT","ET","BT","P","LIVE"].includes(s))return"IN_PLAY";
+  if(hasScore&&Date.now()-new Date(utc).getTime()>3*3600*1000)return"FINISHED";
+  return"TIMED";
+}
+function normTsl(e){
+  const utc=(e.strTimestamp?e.strTimestamp:`${e.dateEvent}T${e.strTime||"00:00:00"}`).replace(/\+00:00$/,"").replace(/Z$/,"")+"Z";
+  const st=tslStatus(e,utc);
+  const n=v=>v==null||v===""?null:+v;
+  return{id:1e9+(+e.idEvent),utcDate:utc,status:st,round:+e.intRound||0,
+    competition:{code:"TSL",name:"Süper Lig"},
+    homeTeam:{id:+e.idHomeTeam,shortName:e.strHomeTeam},awayTeam:{id:+e.idAwayTeam,shortName:e.strAwayTeam},
+    score:{fullTime:{home:st==="FINISHED"?n(e.intHomeScore):null,away:st==="FINISHED"?n(e.intAwayScore):null}}};
+}
+async function tslRound(season,r,prog){
+  const k=`tr:${season}:${r}`,c=store.get(k,null);
+  if(c&&(c.final||Date.now()-c.at<10*60*1000))return c.data;
+  prog&&prog(`Süper Lig ${r}. hafta yükleniyor…`);
+  const j=await tsdb(`eventsround.php?id=${TSL_ID}&r=${r}&s=${season}`,prog);
+  const data=(j.events||[]).map(normTsl);
+  const last=Math.max(0,...data.map(m=>new Date(m.utcDate).getTime()));
+  const final=data.length>0&&data.every(m=>m.status==="FINISHED")&&Date.now()-last>86400000;
+  store.set(k,{at:Date.now(),final,data});
+  return data;
+}
+async function tslCurrentRound(season,prog){
+  const k="tn:"+season,c=store.get(k,null);
+  if(c&&Date.now()-c.at<30*60*1000)return c.r;
+  const j=await tsdb(`eventsnextleague.php?id=${TSL_ID}`,prog);
+  const e=(j.events||[])[0];
+  // Sıradaki maç bu sezondaysa onun haftası; değilse (sezon bitti ya da geçmiş sezon) son hafta
+  const r=e&&e.strSeason===season?(+e.intRound||1):TSL_ROUNDS;
+  store.set(k,{at:Date.now(),r});return r;
+}
+async function tslDay(dayDate,prog){
+  const season=seasonOf(dayDate),d=ymd(dayDate);
+  let r=Math.min(await tslCurrentRound(season,prog),TSL_ROUNDS),dir=0;const out=new Map();
+  for(let i=0;i<TSL_ROUNDS+2&&r>=1&&r<=TSL_ROUNDS;i++){
+    const ev=await tslRound(season,r,prog);
+    if(!ev.length){if(dir===0){r--;dir=-1;continue}break}
+    ev.forEach(m=>{if(ymd(new Date(m.utcDate))===d)out.set(m.id,m)});
+    const ds=ev.map(m=>ymd(new Date(m.utcDate))).sort();
+    const nd=d<ds[0]?-1:d>ds[ds.length-1]?1:0;
+    if(nd===0||(dir!==0&&nd!==dir))break;
+    dir=nd;r+=nd;
+  }
+  return[...out.values()];
+}
+async function tslAllEvents(season,upto,prog){
+  const all=[];
+  for(let r=1;r<=upto;r++){all.push(...await tslRound(season,r,t=>prog&&prog(`Süper Lig puan durumu hesaplanıyor: ${r}/${upto}. hafta`)))}
+  return all;
+}
+// Bitmiş maç listesinden puan durumu üretir (football-data puan durumuyla aynı yapı)
+function buildTable(evs){
+  const out={teams:{},avgGoals:1.35,homeAvg:1.5,awayAvg:1.2};
+  const blank=()=>({pos:0,p:0,w:0,d:0,l:0,pts:0,gf:0,ga:0,fa:[]});
+  const T=id=>out.teams[id]||(out.teams[id]={total:blank(),home:blank(),away:blank()});
+  const up=(row,f,a)=>{row.p++;row.gf+=f;row.ga+=a;if(f>a){row.w++;row.pts+=3;row.fa.push("W")}else if(f===a){row.d++;row.pts++;row.fa.push("D")}else{row.l++;row.fa.push("L")}};
+  [...evs].sort((a,b)=>a.utcDate.localeCompare(b.utcDate)).forEach(e=>{
+    const h=e.score.fullTime.home,a=e.score.fullTime.away;if(h==null||a==null)return;
+    const H=T(e.homeTeam.id),A=T(e.awayTeam.id);
+    up(H.total,h,a);up(H.home,h,a);up(A.total,a,h);up(A.away,a,h);
+  });
+  const ids=Object.keys(out.teams);
+  ids.forEach(id=>{const t=out.teams[id];["total","home","away"].forEach(k=>{t[k].form=t[k].fa.slice(-5).join(",");delete t[k].fa})});
+  ids.map(id=>out.teams[id].total).sort((x,y)=>y.pts-x.pts||(y.gf-y.ga)-(x.gf-x.ga)||y.gf-x.gf).forEach((r,i)=>r.pos=i+1);
+  let gf=0,gp=0,hg=0,hp=0,ag=0,ap=0;
+  ids.forEach(id=>{const t=out.teams[id];gf+=t.total.gf;gp+=t.total.p;hg+=t.home.gf;hp+=t.home.p;ag+=t.away.gf;ap+=t.away.p});
+  if(gp){out.avgGoals=gf/gp;out.homeAvg=hp?hg/hp:out.avgGoals*1.12;out.awayAvg=ap?ag/ap:out.avgGoals*0.88}
+  return out;
 }
 const stCache={};
 async function standings(code,season,progress){
@@ -292,9 +398,10 @@ const tn=t=>t.shortName||t.name||t.tla||"?";
 function renderList(){
   const box=$("#v-matches");
   const list=matches.filter(m=>enabled.has(m.competition.code));
-  if(!list.length){box.innerHTML=`<div class="panel msg">${fmtDay(day)} için seçili turnuvalarda maç yok. Tarihi değiştir ya da Ayarlar'dan turnuva ekle.</div>`;updateRun();return}
+  const notes=listNotes.map(n=>`<div class="panel msg err">${n}</div>`).join("");
+  if(!list.length){box.innerHTML=notes+`<div class="panel msg">${fmtDay(day)} için seçili turnuvalarda maç yok. Tarihi değiştir ya da Ayarlar'dan turnuva ekle.</div>`;updateRun();return}
   const groups={};list.forEach(m=>(groups[m.competition.code]=groups[m.competition.code]||[]).push(m));
-  box.innerHTML=`<div class="selrow"><button class="linkbtn" id="selAll" type="button">Tümünü seç</button><button class="linkbtn" id="selNone" type="button">Temizle</button></div>`+
+  box.innerHTML=notes+`<div class="selrow"><button class="linkbtn" id="selAll" type="button">Tümünü seç</button><button class="linkbtn" id="selNone" type="button">Temizle</button></div>`+
     Object.entries(groups).map(([code,ms])=>`<div class="panel lg"><div class="lh"><span class="label">${COMPS[code]||ms[0].competition.name}</span><span class="label">${ms.length} maç</span></div>`+
     ms.sort((a,b)=>a.utcDate.localeCompare(b.utcDate)).map(m=>{const[s,c]=statusOf(m);return `<label class="m" for="cb${m.id}"><input type="checkbox" id="cb${m.id}" data-id="${m.id}" ${selected.has(m.id)?"checked":""}><span class="t"><div>${tn(m.homeTeam)}</div><div>${tn(m.awayTeam)}</div></span><span class="k ${c}">${s}</span></label>`}).join("")+`</div>`).join("");
   box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.addEventListener("change",()=>{const id=+cb.dataset.id;cb.checked?selected.add(id):selected.delete(id);updateRun()}));
@@ -324,7 +431,7 @@ function opts(){return{n:+$("#nSim").value,wForm:$("#wForm").value/100,K:+$("#sh
 function expectedGoals(m,S,o){
   const H=S&&S.teams[m.homeTeam.id],A=S&&S.teams[m.awayTeam.id];
   if(!H||!H.total||!A||!A.total){return{lh:1.45*o.tempo,la:1.15*o.tempo,noData:true,H,A}}
-  const G=S.avgGoals,K=o.K;
+  const G=S.avgGoals,K=Math.max(o.K,0.5);
   const rate=(g,p)=>((g+K*G)/(p+K))/G;          // lig ortalamasına çekilmiş oran
   const attH=rate(H.total.gf,H.total.p),defH=rate(H.total.ga,H.total.p);
   const attA=rate(A.total.gf,A.total.p),defA=rate(A.total.ga,A.total.p);
@@ -372,11 +479,20 @@ async function run(){
   const prog=t=>box.innerHTML=`<div class="panel msg"><span class="spin"></span>${t}</div>`;
   const codes=[...new Set(list.map(m=>m.competition.code))];
   const S={};
+  let tslEv=null;
   try{
-    for(let i=0;i<codes.length;i++){prog(`Puan durumu yükleniyor (${i+1}/${codes.length}): ${COMPS[codes[i]]||codes[i]}`);S[codes[i]]=await standings(codes[i],null,prog)}
+    for(let i=0;i<codes.length;i++){
+      prog(`Puan durumu yükleniyor (${i+1}/${codes.length}): ${COMPS[codes[i]]||codes[i]}`);
+      if(codes[i]==="TSL"){
+        const upto=Math.max(...list.filter(m=>m.competition.code==="TSL").map(m=>m.round||1));
+        tslEv=await tslAllEvents(seasonOf(day),upto,prog);
+      }else S[codes[i]]=await standings(codes[i],null,prog);
+    }
   }catch(e){box.innerHTML=`<div class="panel msg err">${e.message}</div>`;return}
   prog("Simüle ediliyor…");await sleep(30);
-  const R=list.sort((a,b)=>a.utcDate.localeCompare(b.utcDate)).map(m=>simulate(m,S[m.competition.code],o));
+  // Süper Lig: her maç için yalnızca o maçtan önce oynanmış maçlardan puan durumu
+  const statsFor=m=>m.competition.code==="TSL"?buildTable(tslEv.filter(e=>e.status==="FINISHED"&&e.utcDate<m.utcDate)):S[m.competition.code];
+  const R=list.sort((a,b)=>a.utcDate.localeCompare(b.utcDate)).map(m=>simulate(m,statsFor(m),o));
   lastResults=R;
   const fin=R.filter(r=>actual(r.m));
   const hit=fin.filter(r=>{const a=actual(r.m);return(a[0]>a[1]?0:a[0]===a[1]?1:2)===r.best}).length;
@@ -448,7 +564,7 @@ function card(r){
 
 /* ================= sekmeler & ayarlar ================= */
 function showTab(t){["matches","preds","set"].forEach(k=>{$("#v-"+k).hidden=k!==t;$("#t-"+k).setAttribute("aria-selected",k===t)});$(".fab").hidden=t==="set";window.scrollTo(0,0)}
-$("#t-matches").onclick=()=>showTab("matches");
+$("#t-matches").onclick=()=>{showTab("matches");if(compsChanged){compsChanged=false;selected.clear();loadMatches()}};
 $("#t-preds").onclick=()=>{if(!lastResults)$("#v-preds").innerHTML=`<div class="panel msg">Henüz simülasyon yok. Maçlar sekmesinden maç seçip alttaki düğmeye bas.</div>`;showTab("preds")};
 $("#t-set").onclick=()=>showTab("set");
 $("#prev").onclick=()=>{day.setDate(day.getDate()-1);selected.clear();lastResults=null;showTab("matches");loadMatches()};
@@ -458,7 +574,8 @@ $("#reseed").onclick=()=>{seed=Math.floor(Math.random()*1e6);if(selected.size)ru
 $("#apiKey").value=apiKey;
 $("#saveKey").onclick=()=>{apiKey=$("#apiKey").value.trim();store.set("apiKey",apiKey);showTab("matches");loadMatches()};
 $("#compChips").innerHTML=Object.entries(COMPS).map(([c,n])=>`<label class="chip" for="c-${c}"><input type="checkbox" id="c-${c}" data-c="${c}" ${enabled.has(c)?"checked":""}>${n}</label>`).join("");
-$("#compChips").querySelectorAll("input").forEach(cb=>cb.onchange=()=>{cb.checked?enabled.add(cb.dataset.c):enabled.delete(cb.dataset.c);store.set("comps",[...enabled]);if(matches.length)renderList()});
+$("#compChips").querySelectorAll("input").forEach(cb=>cb.onchange=()=>{cb.checked?enabled.add(cb.dataset.c):enabled.delete(cb.dataset.c);store.set("comps",[...enabled]);compsChanged=true});
+let compsChanged=false;
 const SL=["nSim","wForm","shrink","homeAdv","tempo","rho"];
 const saved=store.get("opts",{});SL.forEach(id=>{if(saved[id]!=null)$("#"+id).value=saved[id]});
 function syncOut(){const o=opts();$("#oForm").textContent=Math.round(o.wForm*100);$("#oShrink").textContent=o.K+" maç";$("#oHome").textContent=(o.home>0?"+":"")+Math.round(o.home*100)+"%";$("#oTempo").textContent="×"+o.tempo.toFixed(2);$("#oRho").textContent=o.rho.toFixed(2);

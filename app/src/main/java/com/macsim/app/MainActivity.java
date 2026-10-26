@@ -23,7 +23,16 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
 
-    private static final String API_PREFIX = "https://api.football-data.org/";
+    private static final String[] API_PREFIXES = {
+            "https://api.football-data.org/",
+            "https://www.thesportsdb.com/api/"
+    };
+
+    private static boolean allowed(String url) {
+        if (url == null) return false;
+        for (String p : API_PREFIXES) if (url.startsWith(p)) return true;
+        return false;
+    }
     private WebView web;
     private final ExecutorService pool = Executors.newFixedThreadPool(2);
 
@@ -93,7 +102,7 @@ public class MainActivity extends Activity {
                 int code = 0;
                 String body = "";
                 String reset = "0";
-                if (url == null || !url.startsWith(API_PREFIX)) {
+                if (!allowed(url)) {
                     body = "blocked";
                 } else {
                     HttpURLConnection c = null;
@@ -101,7 +110,8 @@ public class MainActivity extends Activity {
                         c = (HttpURLConnection) new URL(url).openConnection();
                         c.setConnectTimeout(15000);
                         c.setReadTimeout(20000);
-                        c.setRequestProperty("X-Auth-Token", token == null ? "" : token);
+                        if (token != null && !token.isEmpty()) c.setRequestProperty("X-Auth-Token", token);
+                        c.setRequestProperty("User-Agent", "SkorSimulatoru/1.1 (Android)");
                         c.setRequestProperty("Accept", "application/json");
                         code = c.getResponseCode();
                         String r = c.getHeaderField("X-RequestCounter-Reset");
