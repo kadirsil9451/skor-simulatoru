@@ -14,7 +14,20 @@ android {
         versionName '1.1'
     }
 
+    // Sabit imza: her derlemede aynı anahtar, böylece güncellemeler eskisinin üzerine kurulur
+    signingConfigs {
+        debug {
+            storeFile file('skor.keystore')
+            storePassword 'skorsim'
+            keyAlias 'skor'
+            keyPassword 'skorsim'
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
         }
